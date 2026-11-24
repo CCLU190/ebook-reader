@@ -440,38 +440,14 @@
         // 3. PWA & OFFLINE DETECTION
         // =========================================================================
         function initPWA() {
-            // Generate inline manifest blob
-            const manifestData = {
-                name: "雲端離線電子書閱讀器",
-                short_name: "電子書",
-                start_url: "./",
-                display: "standalone",
-                background_color: "#1f2937",
-                theme_color: "#2563eb",
-                icons: [{
-                    src: "https://cdn-icons-png.flaticon.com/512/3389/3389081.png",
-                    sizes: "512x512",
-                    type: "image/png"
-                }]
-            };
-            const stringManifest = JSON.stringify(manifestData);
-            const blob = new Blob([stringManifest], {type: 'application/json'});
-            document.getElementById('manifestLink').setAttribute('href', URL.createObjectURL(blob));
+            // Use external manifest.json & sw.js hosted on GitHub Pages
+            const manifestEl = document.getElementById('manifestLink');
+            if (manifestEl) manifestEl.setAttribute('href', './manifest.json');
 
-            // Register inline service worker
             if ('serviceWorker' in navigator) {
-                const swCode = `
-                    const CACHE_NAME = 'ebook-pwa-v2';
-                    self.addEventListener('install', (e) => e.waitUntil(self.skipWaiting()));
-                    self.addEventListener('activate', (e) => e.waitUntil(self.clients.claim()));
-                    self.addEventListener('fetch', (e) => {
-                        e.respondWith(
-                            fetch(e.request).catch(() => caches.match(e.request))
-                        );
-                    });
-                `;
-                const swBlob = new Blob([swCode], { type: 'application/javascript' });
-                navigator.serviceWorker.register(URL.createObjectURL(swBlob)).catch(() => {});
+                navigator.serviceWorker.register('./sw.js').catch((err) => {
+                    console.warn('Service Worker 註冊失敗:', err);
+                });
             }
 
             window.addEventListener('online', updateOfflineStatus);
@@ -627,17 +603,36 @@
 
             grid.querySelectorAll('.btn-toggle-offline').forEach(el => {
                 el.addEventListener('click', async (e) => {
-                    const id = e.currentTarget.getAttribute('data-id');
+                    const btn = e.currentTarget;
+                    const id = btn.getAttribute('data-id');
                     const b = STATE.books.find(x => x.id === id);
                     if (!b) return;
 
                     if (b.isDownloaded) {
-                        await dbManager.removeBookFile(id);
-                        b.isDownloaded = false;
-                        saveBooksToLocalStorage();
-                        renderBookshelf();
+                        if (confirm(`確定要移除《${b.title}》的本機離線快取嗎？（不會刪除雲端檔案）`)) {
+                            await dbManager.removeBookFile(id);
+                            b.isDownloaded = false;
+                            saveBooksToLocalStorage();
+                            renderBookshelf();
+                        }
                     } else {
-                        alert('請先開啓或匯入該書籍檔案，系統將自動將其快取至離線 IndexedDB 中。');
+                        if (b.source === 'gdrive' || b.driveId) {
+                            const icon = btn.querySelector('i');
+                            const originalClass = icon ? icon.className : '';
+                            if (icon) icon.className = 'fa-solid fa-spinner fa-spin text-blue-500';
+                            btn.disabled = true;
+                            try {
+                                await downloadBookFromDrive(b);
+                                renderBookshelf();
+                                alert(`《${b.title}》已下載至離線快取，無網路時也可閱讀！`);
+                            } catch (err) {
+                                alert(err.message);
+                                if (icon) icon.className = originalClass;
+                                btn.disabled = false;
+                            }
+                        } else {
+                            alert('此為本機匯入書籍，請重新匯入檔案以建立離線快取。');
+                        }
                     }
                 });
             });
@@ -720,6 +715,29 @@
         // =========================================================================
         // 7. READER ENGINE (EPUB & PDF)
         // =========================================================================
+        async function downloadBookFromDrive(book) {
+            const token = STATE.googleAccessToken;
+            if (!token) {
+                throw new Error('請先點擊「雲端同步」登入 Google 帳號，才能下載雲端書籍。');
+            }
+            const driveFileId = book.driveId || book.id;
+            const res = await fetch(`https://www.googleapis.com/drive/v3/files/${driveFileId}?alt=media`, {
+                headers: { Authorization: `Bearer ${token}` }
+            });
+            if (!res.ok) {
+                if (res.status === 401) {
+                    STATE.googleAccessToken = null;
+                    throw new Error('Google 登入授權已過期，請重新點擊「雲端同步」登入後再試。');
+                }
+                throw new Error(`雲端下載失敗 (HTTP ${res.status})`);
+            }
+            const blob = await res.blob();
+            await dbManager.saveBookFile(book.id, blob);
+            book.isDownloaded = true;
+            saveBooksToLocalStorage();
+            return blob;
+        }
+
         async function openBook(bookId) {
             const book = STATE.books.find(b => b.id === bookId);
             if (!book) return;
@@ -734,35 +752,26 @@
             document.getElementById('readerSubTitle').textContent = '載入中...';
 
             // Get binary blob from IndexedDB
-           let blob = await dbManager.getBookFile(bookId);
-if (!blob) {
-    if (book && (book.source === 'gdrive' || book.driveId)) {
-        const token = STATE.googleAccessToken;
-        if (!token) {
-            alert('請先點擊「雲端同步」登入 Google 帳號，才能下載雲端書籍。');
-            closeReaderView();
-            return;
-        }
-        try {
-            const driveFileId = book.driveId || book.id;
-            const res = await fetch(`https://www.googleapis.com/drive/v3/files/${driveFileId}?alt=media`, {
-                headers: { Authorization: `Bearer ${token}` }
-            });
-            if (!res.ok) throw new Error(`下載失敗 (${res.status})`);
-
-            blob = await res.blob();
-            await dbManager.saveBookFile(bookId, blob);
-        } catch (err) {
-            alert('雲端下載失敗：' + err.message);
-            closeReaderView();
-            return;
-        }
-    } else {
-        alert('無法尋找該書籍的本地離線檔案。若為雲端書籍，請先連結雲端同步。');
-        closeReaderView();
-        return;
-    }
-}
+            let blob = await dbManager.getBookFile(bookId);
+            if (!blob) {
+                if (book && (book.source === 'gdrive' || book.driveId)) {
+                    try {
+                        document.getElementById('readerSubTitle').textContent = '正在從雲端下載並快取...';
+                        blob = await downloadBookFromDrive(book);
+                    } catch (err) {
+                        alert(err.message);
+                        closeReaderView();
+                        return;
+                    }
+                } else {
+                    alert('無法尋找該書籍的本地離線檔案。若為雲端書籍，請先連結雲端同步。');
+                    closeReaderView();
+                    return;
+                }
+            } else if (!book.isDownloaded) {
+                book.isDownloaded = true;
+                saveBooksToLocalStorage();
+            }
 
             const isPdf = (book.format || '').toLowerCase() === 'pdf';
 
@@ -1232,6 +1241,7 @@ if (!blob) {
                             id: file.id,
                             title: file.name.replace(/\.(pdf|epub)$/i, ''),
                             fileName: file.name,
+                            format: isPdf ? 'pdf' : 'epub',
                             type: isPdf ? 'pdf' : 'epub',
                             source: 'gdrive',
                             size: file.size ? Number(file.size) : 0,
@@ -1398,8 +1408,13 @@ if (!blob) {
             document.getElementById('btnOpenSettings').onclick = () => document.getElementById('settingsModal').classList.remove('hidden');
             document.getElementById('btnCloseSettings').onclick = () => document.getElementById('settingsModal').classList.add('hidden');
             document.getElementById('btnSaveSettings').onclick = () => {
-                localStorage.setItem('gdrive_client_id', document.getElementById('settingClientId').value.trim());
-                localStorage.setItem('gdrive_folder_id', document.getElementById('settingFolderId').value.trim());
+                const rawCid = document.getElementById('settingClientId').value.trim();
+                const rawFid = document.getElementById('settingFolderId').value.trim();
+                const match = rawFid.match(/folders\/([a-zA-Z0-9_-]+)/);
+                const cleanFid = match ? match[1] : rawFid;
+                document.getElementById('settingFolderId').value = cleanFid;
+                localStorage.setItem('gdrive_client_id', rawCid);
+                localStorage.setItem('gdrive_folder_id', cleanFid);
                 document.getElementById('settingsModal').classList.add('hidden');
                 alert('設定已成功儲存！');
             };
