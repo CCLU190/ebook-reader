@@ -734,12 +734,35 @@
             document.getElementById('readerSubTitle').textContent = '載入中...';
 
             // Get binary blob from IndexedDB
-            let blob = await dbManager.getBookFile(bookId);
-            if (!blob) {
-                alert('無法尋找該書籍的本地離線檔案。若為雲端書籍，請先連結雲端同步。');
-                closeReaderView();
-                return;
-            }
+           let blob = await dbManager.getBookFile(bookId);
+if (!blob) {
+    if (book && (book.source === 'gdrive' || book.driveId)) {
+        const token = STATE.googleAccessToken;
+        if (!token) {
+            alert('請先點擊「雲端同步」登入 Google 帳號，才能下載雲端書籍。');
+            closeReaderView();
+            return;
+        }
+        try {
+            const driveFileId = book.driveId || book.id;
+            const res = await fetch(`https://www.googleapis.com/drive/v3/files/${driveFileId}?alt=media`, {
+                headers: { Authorization: `Bearer ${token}` }
+            });
+            if (!res.ok) throw new Error(`下載失敗 (${res.status})`);
+
+            blob = await res.blob();
+            await dbManager.saveBookFile(bookId, blob);
+        } catch (err) {
+            alert('雲端下載失敗：' + err.message);
+            closeReaderView();
+            return;
+        }
+    } else {
+        alert('無法尋找該書籍的本地離線檔案。若為雲端書籍，請先連結雲端同步。');
+        closeReaderView();
+        return;
+    }
+}
 
             const isPdf = (book.format || '').toLowerCase() === 'pdf';
 
