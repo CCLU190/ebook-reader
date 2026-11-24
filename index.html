@@ -1184,7 +1184,43 @@
                     remoteBooks = [];
                 }
             }
+// 確保 remoteBooks 是陣列格式
+            if (!Array.isArray(remoteBooks)) {
+                remoteBooks = Object.values(remoteBooks || {});
+            }
 
+            // 2. 掃描 Google Drive 資料夾內的所有 PDF 與 EPUB 電子書
+            let booksQuery = "trashed = false and (mimeType = 'application/pdf' or mimeType = 'application/epub+zip' or name contains '.pdf' or name contains '.epub')";
+            if (folderId) booksQuery += ` and '${folderId}' in parents`;
+
+            const booksRes = await fetch(
+                `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(booksQuery)}&fields=files(id,name,mimeType,size)&pageSize=100`,
+                { headers: { Authorization: `Bearer ${token}` } }
+            );
+            const booksData = await booksRes.json();
+
+            // 3. 將掃描到的雲端電子書合併進書單（避免重複加入）
+            if (booksData.files && booksData.files.length > 0) {
+                const existingIds = new Set(remoteBooks.map(b => b.id));
+                booksData.files.forEach(file => {
+                    if (!existingIds.has(file.id)) {
+                        const isPdf = file.mimeType === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+                        remoteBooks.push({
+                            id: file.id,
+                            title: file.name.replace(/\.(pdf|epub)$/i, ''),
+                            fileName: file.name,
+                            type: isPdf ? 'pdf' : 'epub',
+                            source: 'gdrive',
+                            size: file.size ? Number(file.size) : 0,
+                            category: '未分類',
+                            favorite: false,
+                            progress: 0,
+                            lastRead: Date.now()
+                        });
+                    }
+                });
+            }
+            
             // CRITICAL FIX: Safe conversion for both Array ([...]) and legacy Object ({...}) formats
             const remoteBookList = Array.isArray(remoteBooks) 
                 ? remoteBooks 
