@@ -73,6 +73,20 @@
         .reader-width-container {
             transition: max-width 0.25s ease, width 0.25s ease;
         }
+
+        /* Force EPUB.js inner containers & iframes to stay symmetrically centered at 100% width */
+        #epubViewerContainer .epub-container,
+        #epubViewerContainer .epub-view,
+        #epubViewerContainer .epub-view > iframe {
+            width: 100% !important;
+            max-width: 100% !important;
+            margin-left: 0 !important;
+            margin-right: 0 !important;
+            padding-left: 0 !important;
+            padding-right: 0 !important;
+            box-sizing: border-box !important;
+            left: 0 !important;
+        }
     </style>
 </head>
 <body class="bg-gray-100 text-gray-900 dark:bg-gray-900 dark:text-gray-100 h-full flex flex-col font-sans select-none overflow-hidden">
@@ -818,48 +832,12 @@
                     allowScriptedContent: true
                 });
 
-                // Display saved progress or start
-                if (STATE.currentBook.cfi) {
-                    await STATE.epubRendition.display(STATE.currentBook.cfi);
-                } else {
-                    await STATE.epubRendition.display();
-                }
-
-                // Register style & click-to-zoom image hooks
+                // Register style & click-to-zoom image hooks BEFORE display() so initial chapter gets styled
                 STATE.epubRendition.hooks.content.register((contents) => {
                     const doc = contents.document;
                     if (!doc) return;
 
-                    // Inject custom typography & fix image scaling
-                    const style = doc.createElement('style');
-                    const theme = THEMES[STATE.currentTheme];
-                    style.innerHTML = `
-                        html, body {
-                            margin: 0 !important;
-                            padding: 16px !important;
-                            background-color: transparent !important;
-                            color: ${theme.text} !important;
-                            font-family: system-ui, -apple-system, sans-serif !important;
-                            font-size: ${STATE.fontSize}px !important;
-                            line-height: 1.75 !important;
-                            word-wrap: break-word !important;
-                        }
-                        body * {
-                            color: ${theme.text} !important;
-                            background-color: transparent !important;
-                        }
-                        /* CRITICAL FIX: Full scale image display without small box constraints */
-                        img, svg image, image {
-                            max-width: 100% !important;
-                            height: auto !important;
-                            display: block !important;
-                            margin: 16px auto !important;
-                            cursor: zoom-in !important;
-                            border-radius: 8px;
-                            box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);
-                        }
-                    `;
-                    doc.head.appendChild(style);
+                    injectEpubStyles(doc);
 
                     // Click-to-Zoom Image Lightbox binding
                     const imgs = doc.querySelectorAll('img, image');
@@ -870,7 +848,22 @@
                             if (src) openImageLightbox(src);
                         });
                     });
+
+                    // Ensure iframe height expands properly after styles apply
+                    requestAnimationFrame(() => {
+                        try { if (typeof contents.expand === 'function') contents.expand(); } catch (e) {}
+                    });
                 });
+
+                // Display saved progress or start
+                if (STATE.currentBook.cfi) {
+                    await STATE.epubRendition.display(STATE.currentBook.cfi);
+                } else {
+                    await STATE.epubRendition.display();
+                }
+
+                // Re-apply styles and sync iframe width after initial render
+                refreshEpubStylesAndLayout();
 
                 // Relocated / Location progress tracking
                 STATE.epubBook.ready.then(() => {
@@ -1032,12 +1025,140 @@
         }
 
         // =========================================================================
-        // 9. THEME & READING WIDTH CONTROLS
+        // 9. THEME, TYPOGRAPHY & READING WIDTH CONTROLS
         // =========================================================================
+        function injectEpubStyles(doc) {
+            if (!doc || !doc.head) return;
+            const theme = THEMES[STATE.currentTheme] || THEMES.light;
+            const linkColor = STATE.currentTheme === 'dark' ? '#60a5fa' : '#2563eb';
+
+            let style = doc.getElementById('custom-epub-reader-style');
+            if (!style) {
+                style = doc.createElement('style');
+                style.id = 'custom-epub-reader-style';
+                doc.head.appendChild(style);
+            }
+
+            style.textContent = `
+                *, *::before, *::after {
+                    box-sizing: border-box !important;
+                }
+                html {
+                    margin: 0 !important;
+                    padding: 0 !important;
+                    width: 100% !important;
+                    max-width: 100% !important;
+                    overflow-x: hidden !important;
+                    background-color: ${theme.containerBg} !important;
+                    color: ${theme.text} !important;
+                    writing-mode: horizontal-tb !important;
+                    -webkit-writing-mode: horizontal-tb !important;
+                }
+                body {
+                    margin: 0 auto !important;
+                    padding: 24px clamp(20px, 4vw, 48px) !important;
+                    width: 100% !important;
+                    max-width: 100% !important;
+                    min-height: 100% !important;
+                    overflow-x: hidden !important;
+                    background-color: ${theme.containerBg} !important;
+                    color: ${theme.text} !important;
+                    font-family: system-ui, -apple-system, "Noto Sans TC", "Microsoft JhengHei", sans-serif !important;
+                    font-size: ${STATE.fontSize}px !important;
+                    line-height: 1.8 !important;
+                    overflow-wrap: break-word !important;
+                    word-wrap: break-word !important;
+                    word-break: break-word !important;
+                }
+                body * {
+                    color: ${theme.text} !important;
+                    background-color: transparent !important;
+                    max-width: 100% !important;
+                    overflow-wrap: break-word !important;
+                    word-wrap: break-word !important;
+                }
+                p, div, section, article, blockquote, li, dd, dt, span {
+                    width: auto !important;
+                    margin-left: 0 !important;
+                    margin-right: 0 !important;
+                    padding-left: 0 !important;
+                    padding-right: 0 !important;
+                    white-space: normal !important;
+                }
+                p, li, dd, dt, blockquote, td, th {
+                    font-size: ${STATE.fontSize}px !important;
+                    line-height: 1.8 !important;
+                }
+                h1 { font-size: ${Math.round(STATE.fontSize * 1.55)}px !important; line-height: 1.4 !important; }
+                h2 { font-size: ${Math.round(STATE.fontSize * 1.35)}px !important; line-height: 1.45 !important; }
+                h3 { font-size: ${Math.round(STATE.fontSize * 1.18)}px !important; line-height: 1.5 !important; }
+                blockquote {
+                    padding-left: 14px !important;
+                    border-left: 3px solid ${linkColor} !important;
+                    opacity: 0.9 !important;
+                }
+                ul, ol {
+                    padding-left: 1.5em !important;
+                }
+                pre, code {
+                    white-space: pre-wrap !important;
+                    word-break: break-all !important;
+                    overflow-x: auto !important;
+                }
+                table {
+                    width: 100% !important;
+                    table-layout: fixed !important;
+                    border-collapse: collapse !important;
+                }
+                a, a * {
+                    color: ${linkColor} !important;
+                }
+                img, svg, svg image, image {
+                    max-width: 100% !important;
+                    height: auto !important;
+                    display: block !important;
+                    margin: 16px auto !important;
+                    cursor: zoom-in !important;
+                    border-radius: 8px;
+                    box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);
+                }
+            `;
+
+            // Clear any inline color/background/width on body that epub.js or book scripts may have set
+            if (doc.body) {
+                doc.body.style.setProperty('color', theme.text, 'important');
+                doc.body.style.setProperty('background-color', theme.containerBg, 'important');
+                doc.body.style.setProperty('font-size', STATE.fontSize + 'px', 'important');
+                doc.body.style.setProperty('width', '100%', 'important');
+                doc.body.style.setProperty('max-width', '100%', 'important');
+                doc.body.style.setProperty('margin', '0 auto', 'important');
+            }
+        }
+
+        function refreshEpubStylesAndLayout() {
+            if (!STATE.epubRendition) return;
+            const contents = STATE.epubRendition.getContents();
+            if (contents && contents.length > 0) {
+                contents.forEach(c => {
+                    if (c && c.document) {
+                        injectEpubStyles(c.document);
+                    }
+                    try { if (typeof c.expand === 'function') c.expand(); } catch (e) {}
+                });
+            }
+            const container = document.getElementById('epubViewerContainer');
+            if (container && container.clientWidth > 0) {
+                try {
+                    STATE.epubRendition.resize(container.clientWidth, container.clientHeight);
+                } catch (e) {}
+            }
+        }
+
         function applyTheme(themeKey) {
             STATE.currentTheme = themeKey;
-            const theme = THEMES[themeKey];
+            const theme = THEMES[themeKey] || THEMES.light;
             const wrapper = document.getElementById('readerWidthWrapper');
+            const epubContainer = document.getElementById('epubViewerContainer');
 
             if (themeKey === 'dark') {
                 document.documentElement.classList.add('dark');
@@ -1045,18 +1166,19 @@
                 document.documentElement.classList.remove('dark');
             }
 
-            wrapper.style.backgroundColor = theme.containerBg;
+            if (wrapper) wrapper.style.backgroundColor = theme.containerBg;
+            if (epubContainer) epubContainer.style.backgroundColor = theme.containerBg;
 
-            // Re-register iframe EPUB styling if active
-            if (STATE.epubRendition && STATE.epubRendition.getContents()) {
-                const contents = STATE.epubRendition.getContents();
-                contents.forEach(c => {
-                    const doc = c.document;
-                    if (doc) {
-                        doc.body.style.setProperty('color', theme.text, 'important');
-                    }
-                });
-            }
+            // Update theme button active styles
+            document.querySelectorAll('.btnThemeOpt').forEach(btn => {
+                if (btn.getAttribute('data-theme') === themeKey) {
+                    btn.classList.add('bg-white', 'dark:bg-gray-600', 'shadow-sm');
+                } else {
+                    btn.classList.remove('bg-white', 'dark:bg-gray-600', 'shadow-sm');
+                }
+            });
+
+            refreshEpubStylesAndLayout();
         }
 
         function applyReaderWidth(widthVal) {
@@ -1077,6 +1199,9 @@
                     btn.classList.remove('bg-white', 'dark:bg-gray-600', 'shadow-sm', 'text-blue-600', 'dark:text-blue-300');
                 }
             });
+
+            // Re-sync EPUB iframe width after CSS transition completes
+            setTimeout(refreshEpubStylesAndLayout, 280);
         }
 
         // =========================================================================
@@ -1360,13 +1485,24 @@
             document.getElementById('btnFontInc').onclick = () => {
                 STATE.fontSize = Math.min(STATE.fontSize + 2, 36);
                 document.getElementById('fontSizeDisplay').textContent = STATE.fontSize + 'px';
-                if (STATE.currentBook) applyTheme(STATE.currentTheme);
+                if (STATE.currentBook) refreshEpubStylesAndLayout();
             };
             document.getElementById('btnFontDec').onclick = () => {
                 STATE.fontSize = Math.max(STATE.fontSize - 2, 12);
                 document.getElementById('fontSizeDisplay').textContent = STATE.fontSize + 'px';
-                if (STATE.currentBook) applyTheme(STATE.currentTheme);
+                if (STATE.currentBook) refreshEpubStylesAndLayout();
             };
+
+            // Keep EPUB layout symmetric & wrapped when browser window resizes
+            let resizeTimer = null;
+            window.addEventListener('resize', () => {
+                clearTimeout(resizeTimer);
+                resizeTimer = setTimeout(() => {
+                    if (STATE.currentBook && STATE.epubRendition) {
+                        refreshEpubStylesAndLayout();
+                    }
+                }, 150);
+            });
 
             // PDF Zoom Controls
             document.getElementById('btnPdfZoomIn').onclick = () => { STATE.pdfScale += 0.2; renderPdfPages(); };
