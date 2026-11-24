@@ -1034,11 +1034,29 @@
                     }
 
                     APP_STATE.epubBook = ePub(epubSource);
-                    APP_STATE.epubRendition = APP_STATE.epubBook.renderTo("epubViewerContainer", {
-                        width: "100%",
-                        height: "100%",
-                        spread: "always"
-                    });
+APP_STATE.epubRendition = APP_STATE.epubBook.renderTo("epubViewerContainer", {
+    width: "100%",
+    height: "100%",
+    flow: "scrolled-doc",        // 改為上下捲動模式，相容性最高
+    spread: "none",              // 關閉強制雙頁，避免排版錯亂與空白
+    allowScriptedContent: true   // 允許部分需要腳本的 EPUB 內文正常顯示
+});
+
+// 強制修正直排書錯位、圖片超出邊界與行距問題
+APP_STATE.epubRendition.themes.default({
+    "html, body": {
+        "writing-mode": "horizontal-tb !important",
+        "-webkit-writing-mode": "horizontal-tb !important",
+        "padding": "16px 24px !important",
+        "line-height": "1.8 !important",
+        "max-width": "850px !important",
+        "margin": "0 auto !important"
+    },
+    "img, svg": {
+        "max-width": "100% !important",
+        "height": "auto !important"
+    }
+});
 
                     // Restore position CFI
                     if (book.epubCfi) {
