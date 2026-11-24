@@ -1132,7 +1132,7 @@
                 // Request Access Token via GIS Token Client
                 const tokenClient = google.accounts.oauth2.initTokenClient({
                     client_id: clientId,
-                    scope: 'https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/drive.file',
+                    scope: 'https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/drive',
                     callback: async (response) => {
                         if (response.error) {
                             alert('Google 認證失敗: ' + response.error);
