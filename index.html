@@ -1,0 +1,1356 @@
+<!DOCTYPE html>
+<html lang="zh-TW" class="h-full">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>雲端個人電子書閱讀器</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        brand: {
+                            50: '#f0f9ff',
+                            100: '#e0f2fe',
+                            500: '#0ea5e9',
+                            600: '#0284c7',
+                            700: '#0369a1',
+                        },
+                        sepia: {
+                            bg: '#fbf0d9',
+                            text: '#5f4b32'
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- PDF.js CDN -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <script>
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    </script>
+    <!-- JSZip for epub.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <!-- EPUB.js CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/epubjs/dist/epub.min.js"></script>
+    <!-- Google Identity Services (GIS) -->
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
+    <style>
+        /* Custom scrollbar & view styles */
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: rgba(156, 163, 175, 0.5); border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: rgba(107, 114, 128, 0.8); }
+        .epub-container iframe { border: none !important; width: 100% !important; height: 100% !important; }
+    </style>
+</head>
+<body class="h-full bg-slate-50 dark:bg-slate-900 text-slate-800 dark:text-slate-100 flex flex-col font-sans transition-colors duration-200">
+
+    <!-- Top Navigation Header -->
+    <header class="h-16 border-b border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/80 backdrop-blur sticky top-0 z-30 flex items-center justify-between px-4 sm:px-6">
+        <div class="flex items-center gap-3">
+            <button id="mobileMenuBtn" class="md:hidden text-slate-500 hover:text-slate-700 dark:hover:text-slate-200 text-xl p-2">
+                <i class="fa-solid fa-bars"></i>
+            </button>
+            <div class="flex items-center gap-2">
+                <div class="w-9 h-9 rounded-xl bg-gradient-to-tr from-brand-600 to-indigo-500 flex items-center justify-center text-white shadow-md shadow-brand-500/20">
+                    <i class="fa-solid fa-book-open"></i>
+                </div>
+                <span class="font-bold text-lg tracking-tight hidden sm:inline-block">雲端書城 <span class="text-xs px-2 py-0.5 rounded-full bg-brand-100 dark:bg-brand-900/50 text-brand-600 dark:text-brand-400 font-normal ml-1">v2.5</span></span>
+            </div>
+        </div>
+
+        <!-- Search Bar -->
+        <div class="flex-1 max-w-md mx-4">
+            <div class="relative">
+                <i class="fa-solid fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm"></i>
+                <input type="text" id="searchInput" placeholder="搜尋書名..." class="w-full pl-9 pr-4 py-1.5 text-sm rounded-full bg-slate-100 dark:bg-slate-800 border-none focus:ring-2 focus:ring-brand-500 transition-all outline-none">
+            </div>
+        </div>
+
+        <!-- Header Actions -->
+        <div class="flex items-center gap-2">
+            <!-- Source Status Indicator -->
+            <button id="syncStatusBtn" class="hidden sm:flex items-center gap-2 text-xs px-3 py-1.5 rounded-full bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 border border-slate-200 dark:border-slate-700 transition">
+                <span id="syncDot" class="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span>
+                <span id="syncText" class="font-medium">本機模式</span>
+            </button>
+
+            <!-- Dark Mode Toggle -->
+            <button id="themeToggleBtn" class="p-2 rounded-xl text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition" title="切換主題">
+                <i class="fa-solid fa-moon dark:hidden text-lg"></i>
+                <i class="fa-solid fa-sun hidden dark:inline text-lg text-amber-400"></i>
+            </button>
+
+            <!-- Settings Button -->
+            <button id="openSettingsBtn" class="p-2 rounded-xl text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition" title="雲端設定">
+                <i class="fa-solid fa-gear text-lg"></i>
+            </button>
+
+            <!-- Import Local File Button -->
+            <label class="cursor-pointer bg-brand-600 hover:bg-brand-700 text-white text-xs font-semibold px-3 py-2 rounded-xl shadow-sm transition flex items-center gap-1.5">
+                <i class="fa-solid fa-plus"></i>
+                <span class="hidden md:inline">匯入本機書籍</span>
+                <input type="file" id="localFileInput" accept=".pdf,.epub" class="hidden" multiple>
+            </label>
+        </div>
+    </header>
+
+    <!-- App Body Layout -->
+    <div class="flex-1 flex overflow-hidden">
+        
+        <!-- Sidebar Navigation -->
+        <aside id="sidebar" class="w-64 border-r border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/50 flex flex-col fixed md:relative inset-y-0 left-0 z-20 transform -translate-x-full md:translate-x-0 transition-transform duration-200 ease-in-out">
+            <div class="p-4 flex-1 overflow-y-auto space-y-6">
+                <!-- System Filter Section -->
+                <div>
+                    <h3 class="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2 px-3">藏書概覽</h3>
+                    <nav class="space-y-1" id="systemNav">
+                        <button data-filter="all" class="nav-item w-full flex items-center justify-between px-3 py-2 rounded-xl text-sm font-medium bg-brand-50 dark:bg-brand-900/30 text-brand-600 dark:text-brand-400">
+                            <span class="flex items-center gap-2.5"><i class="fa-solid fa-books w-4"></i>全部藏書</span>
+                            <span id="count-all" class="text-xs px-2 py-0.5 rounded-full bg-white dark:bg-slate-800">0</span>
+                        </button>
+                        <button data-filter="reading" class="nav-item w-full flex items-center justify-between px-3 py-2 rounded-xl text-sm font-medium text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800/60">
+                            <span class="flex items-center gap-2.5"><i class="fa-solid fa-book-open-reader w-4"></i>閱讀中</span>
+                            <span id="count-reading" class="text-xs px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800">0</span>
+                        </button>
+                        <button data-filter="completed" class="nav-item w-full flex items-center justify-between px-3 py-2 rounded-xl text-sm font-medium text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800/60">
+                            <span class="flex items-center gap-2.5"><i class="fa-solid fa-circle-check w-4"></i>已讀完</span>
+                            <span id="count-completed" class="text-xs px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800">0</span>
+                        </button>
+                        <button data-filter="favorites" class="nav-item w-full flex items-center justify-between px-3 py-2 rounded-xl text-sm font-medium text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800/60">
+                            <span class="flex items-center gap-2.5"><i class="fa-solid fa-star text-amber-400 w-4"></i>我的收藏</span>
+                            <span id="count-favorites" class="text-xs px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800">0</span>
+                        </button>
+                    </nav>
+                </div>
+
+                <!-- Format Filter Section -->
+                <div>
+                    <h3 class="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2 px-3">檔案格式</h3>
+                    <nav class="space-y-1">
+                        <button data-filter="pdf" class="nav-item w-full flex items-center justify-between px-3 py-2 rounded-xl text-sm font-medium text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800/60">
+                            <span class="flex items-center gap-2.5"><i class="fa-solid fa-file-pdf text-red-500 w-4"></i>PDF 文件</span>
+                            <span id="count-pdf" class="text-xs px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800">0</span>
+                        </button>
+                        <button data-filter="epub" class="nav-item w-full flex items-center justify-between px-3 py-2 rounded-xl text-sm font-medium text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800/60">
+                            <span class="flex items-center gap-2.5"><i class="fa-solid fa-book text-emerald-500 w-4"></i>EPUB 電子書</span>
+                            <span id="count-epub" class="text-xs px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800">0</span>
+                        </button>
+                    </nav>
+                </div>
+
+                <!-- Custom Categories Section -->
+                <div>
+                    <div class="flex items-center justify-between px-3 mb-2">
+                        <h3 class="text-xs font-bold uppercase tracking-wider text-slate-400">自訂分類</h3>
+                        <button id="addCategoryBtn" class="text-xs text-brand-600 dark:text-brand-400 hover:underline flex items-center gap-1 font-medium">
+                            <i class="fa-solid fa-plus"></i> 新增
+                        </button>
+                    </div>
+                    <nav class="space-y-1" id="customCategoriesNav">
+                        <!-- Custom categories generated here dynamically -->
+                    </nav>
+                </div>
+            </div>
+
+            <!-- Dashboard Brief Footer -->
+            <div class="p-4 border-t border-slate-200 dark:border-slate-800 text-xs text-slate-500">
+                <div class="flex justify-between items-center mb-1">
+                    <span>總讀過進度:</span>
+                    <span id="overallProgressText" class="font-medium text-slate-700 dark:text-slate-300">0%</span>
+                </div>
+                <div class="w-full bg-slate-200 dark:bg-slate-800 h-1.5 rounded-full overflow-hidden">
+                    <div id="overallProgressBar" class="bg-brand-500 h-full w-0 transition-all duration-300"></div>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Content Area (Bookshelf Grid) -->
+        <main class="flex-1 flex flex-col overflow-hidden bg-slate-100/50 dark:bg-slate-950/40">
+            <!-- Toolbar & Controls -->
+            <div class="p-4 sm:px-6 flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-900/30">
+                <div class="flex items-center gap-2">
+                    <h1 id="currentFilterTitle" class="text-xl font-bold tracking-tight">全部藏書</h1>
+                    <span id="currentFilterCount" class="text-xs px-2.5 py-0.5 rounded-full bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400 font-semibold">0 本</span>
+                </div>
+
+                <div class="flex items-center gap-3 ml-auto">
+                    <!-- Sort By Dropdown -->
+                    <div class="flex items-center gap-2 text-xs">
+                        <span class="text-slate-500">排序:</span>
+                        <select id="sortSelect" class="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-1.5 outline-none focus:ring-1 focus:ring-brand-500 text-slate-700 dark:text-slate-200 font-medium">
+                            <option value="recent">最近閱讀</option>
+                            <option value="title">書名 A-Z</option>
+                            <option value="progress">閱讀進度</option>
+                            <option value="size">檔案大小</option>
+                        </select>
+                    </div>
+
+                    <!-- Sync/Refresh Button -->
+                    <button id="refreshDriveBtn" class="p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 transition" title="重新整理/同步雲端">
+                        <i class="fa-solid fa-rotate"></i>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Books Grid Container -->
+            <div class="flex-1 overflow-y-auto p-4 sm:p-6" id="dropZone">
+                <!-- Drop Overlay visual -->
+                <div id="dropOverlay" class="hidden absolute inset-0 bg-brand-500/10 backdrop-blur-sm border-2 border-dashed border-brand-500 z-10 flex flex-col items-center justify-center text-brand-600 dark:text-brand-400">
+                    <i class="fa-solid fa-cloud-arrow-up text-5xl mb-3 animate-bounce"></i>
+                    <p class="font-bold text-lg">釋放滑鼠以匯入電子書檔案</p>
+                </div>
+
+                <!-- Empty State -->
+                <div id="emptyState" class="hidden h-full flex flex-col items-center justify-center text-center p-8">
+                    <div class="w-20 h-20 rounded-full bg-slate-200 dark:bg-slate-800 flex items-center justify-center text-slate-400 mb-4 text-3xl">
+                        <i class="fa-solid fa-book-open"></i>
+                    </div>
+                    <h3 class="text-lg font-bold mb-1">未發現電子書</h3>
+                    <p class="text-sm text-slate-500 max-w-sm mb-6">您可以點選上方「雲端設定」連結您的 Google Drive，或直接將本機 `.pdf` / `.epub` 檔案拖拽至此處開讀。</p>
+                    <button id="emptySettingsBtn" class="px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium rounded-xl shadow-sm transition flex items-center gap-2">
+                        <i class="fa-solid fa-cloud"></i> 設定 Google 雲端同步
+                    </button>
+                </div>
+
+                <!-- Book Cards Grid -->
+                <div id="booksGrid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 sm:gap-6">
+                    <!-- Books dynamically inserted here -->
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Fullscreen Reader Overlay -->
+    <div id="readerModal" class="fixed inset-0 bg-slate-900 z-50 hidden flex flex-col">
+        <!-- Reader Header Navigation -->
+        <div class="h-14 bg-slate-900/90 text-slate-200 border-b border-slate-800 px-4 flex items-center justify-between gap-4 select-none shrink-0">
+            <div class="flex items-center gap-3 overflow-hidden">
+                <button id="closeReaderBtn" class="p-2 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-white transition">
+                    <i class="fa-solid fa-arrow-left text-lg"></i>
+                </button>
+                <div class="truncate">
+                    <h2 id="readerTitle" class="font-semibold text-sm sm:text-base truncate">書籍標題</h2>
+                    <p id="readerSubTitle" class="text-xs text-slate-400 truncate">進度 0%</p>
+                </div>
+            </div>
+
+            <!-- PDF Controls -->
+            <div id="pdfControls" class="hidden flex items-center gap-1 sm:gap-2 text-xs">
+                <button id="pdfPrevBtn" class="p-2 hover:bg-slate-800 rounded-lg" title="上一頁"><i class="fa-solid fa-chevron-left"></i></button>
+                <div class="flex items-center gap-1 bg-slate-800 px-2 py-1 rounded-lg">
+                    <input type="number" id="pdfPageNum" class="w-10 bg-transparent text-center font-medium focus:outline-none" min="1" value="1">
+                    <span class="text-slate-500">/</span>
+                    <span id="pdfPageCount">1</span>
+                </div>
+                <button id="pdfNextBtn" class="p-2 hover:bg-slate-800 rounded-lg" title="下一頁"><i class="fa-solid fa-chevron-right"></i></button>
+                <div class="h-4 w-px bg-slate-800 mx-1 hidden sm:block"></div>
+                <button id="pdfZoomOutBtn" class="p-2 hover:bg-slate-800 rounded-lg hidden sm:block" title="縮小"><i class="fa-solid fa-minus"></i></button>
+                <span id="pdfZoomText" class="text-slate-400 hidden sm:inline">100%</span>
+                <button id="pdfZoomInBtn" class="p-2 hover:bg-slate-800 rounded-lg hidden sm:block" title="放大"><i class="fa-solid fa-plus"></i></button>
+            </div>
+
+            <!-- EPUB Controls -->
+            <div id="epubControls" class="hidden flex items-center gap-2 text-xs">
+                <button id="epubTocToggleBtn" class="p-2 hover:bg-slate-800 rounded-lg" title="目錄"><i class="fa-solid fa-list-ul"></i></button>
+                <div class="h-4 w-px bg-slate-800 mx-1"></div>
+                <button id="epubFontMinus" class="p-2 hover:bg-slate-800 rounded-lg" title="縮小字體">A-</button>
+                <button id="epubFontPlus" class="p-2 hover:bg-slate-800 rounded-lg" title="放大字體">A+</button>
+                <div class="h-4 w-px bg-slate-800 mx-1"></div>
+                <!-- Theme Selectors -->
+                <button data-epub-theme="light" class="w-5 h-5 rounded-full bg-white border border-slate-300" title="白色日間"></button>
+                <button data-epub-theme="sepia" class="w-5 h-5 rounded-full bg-[#fbf0d9] border border-amber-900/30" title="護眼米黃"></button>
+                <button data-epub-theme="dark" class="w-5 h-5 rounded-full bg-slate-800 border border-slate-700" title="夜間模式"></button>
+            </div>
+
+            <!-- External Google Drive Viewer Fallback -->
+            <a id="driveFallbackBtn" href="#" target="_blank" class="hidden text-xs px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg border border-slate-700 flex items-center gap-1.5" title="以 Google Drive 預覽器開啟">
+                <i class="fa-solid fa-arrow-up-right-from-square"></i> <span class="hidden md:inline">雲端預覽</span>
+            </a>
+        </div>
+
+        <!-- Reader Main Viewer Container -->
+        <div class="flex-1 relative overflow-hidden flex bg-slate-950">
+            <!-- EPUB Table of Contents Drawer -->
+            <div id="epubTocDrawer" class="w-64 bg-slate-900 border-r border-slate-800 text-slate-300 flex flex-col absolute inset-y-0 left-0 z-20 transform -translate-x-full transition-transform duration-200">
+                <div class="p-3 font-bold border-b border-slate-800 flex items-center justify-between text-sm">
+                    <span>章節目錄</span>
+                    <button id="closeTocBtn" class="text-slate-400 hover:text-white"><i class="fa-solid fa-xmark"></i></button>
+                </div>
+                <div id="epubTocList" class="flex-1 overflow-y-auto p-2 text-sm space-y-1">
+                    <!-- Chapters rendered here -->
+                </div>
+            </div>
+
+            <!-- Loading Spinner Overlay -->
+            <div id="readerLoading" class="absolute inset-0 bg-slate-900/90 z-10 flex flex-col items-center justify-center text-white">
+                <i class="fa-solid fa-circle-notch fa-spin text-4xl text-brand-500 mb-3"></i>
+                <p id="readerLoadingText" class="text-sm font-medium">正在準備載入書籍...</p>
+                <p class="text-xs text-slate-500 mt-2 max-w-xs text-center">大型技術書籍（>100MB）可能需要幾秒鐘進行串流索引解析</p>
+            </div>
+
+            <!-- PDF Viewer Canvas Wrapper -->
+            <div id="pdfViewerContainer" class="hidden flex-1 overflow-auto flex items-center justify-center p-4">
+                <canvas id="pdfCanvas" class="shadow-2xl max-w-full rounded bg-white"></canvas>
+            </div>
+
+            <!-- EPUB Viewport Target -->
+            <div id="epubViewerContainer" class="hidden flex-1 h-full w-full"></div>
+
+            <!-- Previous/Next Touch Hover Arrows -->
+            <button id="prevPageZone" class="absolute left-0 top-14 bottom-0 w-16 hover:bg-black/10 flex items-center justify-center text-white/30 hover:text-white text-2xl transition">
+                <i class="fa-solid fa-chevron-left"></i>
+            </button>
+            <button id="nextPageZone" class="absolute right-0 top-14 bottom-0 w-16 hover:bg-black/10 flex items-center justify-center text-white/30 hover:text-white text-2xl transition">
+                <i class="fa-solid fa-chevron-right"></i>
+            </button>
+        </div>
+    </div>
+
+    <!-- Google Cloud Settings & OAuth Modal -->
+    <div id="settingsModal" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+        <div class="bg-white dark:bg-slate-900 rounded-2xl shadow-xl max-w-lg w-full overflow-hidden border border-slate-200 dark:border-slate-800 flex flex-col max-h-[90vh]">
+            <div class="p-5 border-b border-slate-200 dark:border-slate-800 flex justify-between items-center">
+                <h3 class="font-bold text-lg flex items-center gap-2">
+                    <i class="fa-brands fa-google-drive text-emerald-500"></i> Google 雲端同步設定
+                </h3>
+                <button id="closeSettingsBtn" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">
+                    <i class="fa-solid fa-xmark text-lg"></i>
+                </button>
+            </div>
+            
+            <div class="p-5 overflow-y-auto space-y-4 text-sm">
+                <div>
+                    <label class="block font-medium mb-1 text-slate-700 dark:text-slate-300">Google OAuth Client ID</label>
+                    <input type="text" id="clientIdInput" placeholder="例如: 123456789-xxx.apps.googleusercontent.com" class="w-full px-3 py-2 border border-slate-300 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-800 focus:ring-2 focus:ring-brand-500 outline-none text-xs">
+                </div>
+
+                <div>
+                    <label class="block font-medium mb-1 text-slate-700 dark:text-slate-300">Google 雲端資料夾連結或 ID</label>
+                    <input type="text" id="folderIdInput" placeholder="" class="w-full px-3 py-2 border border-slate-300 dark:border-slate-700 rounded-xl bg-white dark:bg-slate-800 focus:ring-2 focus:ring-brand-500 outline-none text-xs">
+                    <p class="text-[11px] text-slate-400 mt-1">系統會自動解析網址並掃描裡面的 `.pdf` 與 `.epub` 檔案。</p>
+                </div>
+
+                <!-- Tutorial Accordion -->
+                <div class="border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden">
+                    <button id="toggleGuideBtn" class="w-full px-4 py-2.5 bg-slate-50 dark:bg-slate-800/50 flex justify-between items-center text-xs font-semibold text-slate-600 dark:text-slate-300">
+                        <span><i class="fa-solid fa-circle-question text-brand-500 mr-1"></i> 如何取得免費的 Google OAuth Client ID？</span>
+                        <i id="guideArrow" class="fa-solid fa-chevron-down transition-transform"></i>
+                    </button>
+                    <div id="guideContent" class="hidden p-4 bg-slate-50/50 dark:bg-slate-800/20 text-xs text-slate-600 dark:text-slate-400 space-y-2 border-t border-slate-200 dark:border-slate-800">
+                        <ol class="list-decimal pl-4 space-y-1.5">
+                            <li>造訪 <a href="https://console.cloud.google.com/" target="_blank" class="text-brand-600 underline">Google Cloud Console</a> 並建立新專案。</li>
+                            <li>前往「API 和服務」>「庫」，搜尋並啟用 <b>Google Drive API</b>。</li>
+                            <li>前往「OAuth 同意畫面」，選擇 External (外部)，輸入應用程式名稱與 Email 並儲存。</li>
+                            <li>前往「憑證」>「建立憑證」> 選擇 <b>OAuth 用戶端 ID</b>。</li>
+                            <li>應用程式類型選擇 <b>Web 應用程式</b>。</li>
+                            <li>在「已授權的 JavaScript 來源」填入您開啟此網頁的 Domain（例如 `http://localhost` 或 `https://yourdomain.com`）。</li>
+                            <li>複製產生的 Client ID 並貼入上方欄位即可！</li>
+                        </ol>
+                    </div>
+                </div>
+            </div>
+
+            <div class="p-4 border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50 flex justify-end gap-3">
+                <button id="saveSettingsBtn" class="px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white font-medium rounded-xl text-sm transition flex items-center gap-2">
+                    <i class="fa-solid fa-link"></i> 儲存並授權 Google 帳號
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Category Manage / Change Modal -->
+    <div id="categoryModal" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+        <div class="bg-white dark:bg-slate-900 rounded-2xl shadow-xl max-w-sm w-full p-5 border border-slate-200 dark:border-slate-800">
+            <h3 class="font-bold text-base mb-3" id="catModalTitle">設定書籍分類</h3>
+            <div id="catModalOptions" class="space-y-2 max-h-60 overflow-y-auto my-3 text-sm">
+                <!-- Checkboxes/Radios dynamically rendered -->
+            </div>
+            <div class="flex justify-end gap-2 mt-4">
+                <button id="closeCatModalBtn" class="px-3 py-1.5 border border-slate-300 dark:border-slate-700 rounded-xl text-xs font-medium">取消</button>
+                <button id="saveCatModalBtn" class="px-3 py-1.5 bg-brand-600 text-white rounded-xl text-xs font-medium">套用分類</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Notification Container -->
+    <div id="toastContainer" class="fixed bottom-5 right-5 z-50 flex flex-col gap-2 pointer-events-none"></div>
+
+    <!-- Application Core Script -->
+    <script>
+        /**
+         * State Management
+         */
+        const APP_STATE = {
+            clientId: localStorage.getItem('gdrive_client_id') || '',
+            folderId: localStorage.getItem('gdrive_folder_id') || '1u71jSPIwOv2hcoMHh9Wvw0nMoO1OBOD4',
+            accessToken: null,
+            driveMetadataFileId: null,
+            books: [], // Array of book objects
+            categories: JSON.parse(localStorage.getItem('bookshelf_categories')) || ['技術圖書', '小說與文學', '商業財經', '學習筆記'],
+            currentFilter: 'all',
+            searchQuery: '',
+            sortBy: 'recent',
+            currentBookId: null,
+            // Reader Runtime States
+            pdfDoc: null,
+            pdfPage: 1,
+            pdfScale: 1.2,
+            epubBook: null,
+            epubRendition: null
+        };
+
+        // DOM Element Selectors
+        const $ = selector => document.querySelector(selector);
+        const $$ = selector => document.querySelectorAll(selector);
+
+        /**
+         * Initialize App on Load
+         */
+        window.addEventListener('DOMContentLoaded', () => {
+            initTheme();
+            setupEventListeners();
+            loadCachedBooks();
+            renderCategoriesSidebar();
+            renderBookshelf();
+
+            // Pre-fill settings modal inputs
+            $('#clientIdInput').value = APP_STATE.clientId;
+            $('#folderIdInput').value = APP_STATE.folderId;
+
+            // Auto-check GIS setup if Client ID exists
+            if (APP_STATE.clientId) {
+                updateSyncStatus('ready', '待授權雲端');
+            }
+        });
+
+        /* Toast Notification Helper */
+        function showToast(message, type = 'info') {
+            const container = $('#toastContainer');
+            const toast = document.createElement('div');
+            const iconMap = {
+                info: 'fa-circle-info text-blue-500',
+                success: 'fa-circle-check text-emerald-500',
+                warning: 'fa-triangle-exclamation text-amber-500',
+                error: 'fa-circle-xmark text-red-500'
+            };
+            toast.className = `pointer-events-auto bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 border border-slate-200 dark:border-slate-700 shadow-xl px-4 py-3 rounded-2xl flex items-center gap-3 text-xs font-medium transform transition-all duration-300 translate-y-2 opacity-0`;
+            toast.innerHTML = `<i class="fa-solid ${iconMap[type]} text-base"></i><span>${message}</span>`;
+            
+            container.appendChild(toast);
+            setTimeout(() => {
+                toast.classList.remove('translate-y-2', 'opacity-0');
+            }, 10);
+
+            setTimeout(() => {
+                toast.classList.add('opacity-0', 'translate-y-2');
+                setTimeout(() => toast.remove(), 300);
+            }, 3500);
+        }
+
+        /* Theme Handler */
+        function initTheme() {
+            if (localStorage.theme === 'dark' || (!('theme' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+                document.documentElement.classList.add('dark');
+            } else {
+                document.documentElement.classList.remove('dark');
+            }
+        }
+
+        $('#themeToggleBtn').addEventListener('click', () => {
+            const isDark = document.documentElement.classList.toggle('dark');
+            localStorage.theme = isDark ? 'dark' : 'light';
+        });
+
+        /* Sync Status UI Helper */
+        function updateSyncStatus(state, text) {
+            const dot = $('#syncDot');
+            const txt = $('#syncText');
+            txt.textContent = text;
+            if (state === 'connected') {
+                dot.className = 'w-2 h-2 rounded-full bg-emerald-500';
+            } else if (state === 'syncing') {
+                dot.className = 'w-2 h-2 rounded-full bg-amber-500 animate-ping';
+            } else {
+                dot.className = 'w-2 h-2 rounded-full bg-slate-400';
+            }
+            $('#syncStatusBtn').classList.remove('hidden');
+        }
+
+        /**
+         * Local Storage / Cache Loader
+         */
+        function loadCachedBooks() {
+            const cached = localStorage.getItem('bookshelf_books');
+            if (cached) {
+                try {
+                    APP_STATE.books = JSON.parse(cached);
+                } catch (e) {
+                    APP_STATE.books = [];
+                }
+            }
+        }
+
+        function saveBooksCache() {
+            // Filter out Blob references before saving to local storage
+            const serializable = APP_STATE.books.map(b => {
+                const copy = { ...b };
+                delete copy.fileObj;
+                return copy;
+            });
+            localStorage.setItem('bookshelf_books', JSON.stringify(serializable));
+            localStorage.setItem('bookshelf_categories', JSON.stringify(APP_STATE.categories));
+            updateOverallProgress();
+        }
+
+        /**
+         * Google Drive API & OAuth GIS Integration
+         */
+        function parseFolderId(input) {
+            if (!input) return '';
+            const match = input.match(/folders\/([a-zA-Z0-9_-]+)/);
+            return match ? match[1] : input.trim();
+        }
+
+        function authenticateGoogleDrive() {
+            const clientId = $('#clientIdInput').value.trim();
+            const folderRaw = $('#folderIdInput').value.trim();
+            const folderId = parseFolderId(folderRaw);
+
+            if (!clientId) {
+                showToast('請先填入 Google OAuth Client ID！', 'warning');
+                return;
+            }
+            if (!folderId) {
+                showToast('請先輸入 Google 雲端資料夾網址或 ID！', 'warning');
+                return;
+            }
+
+            APP_STATE.clientId = clientId;
+            APP_STATE.folderId = folderId;
+            localStorage.setItem('gdrive_client_id', clientId);
+            localStorage.setItem('gdrive_folder_id', folderId);
+
+            // Initialize GIS Client
+            try {
+                const tokenClient = google.accounts.oauth2.initTokenClient({
+                    client_id: clientId,
+                    scope: 'https://www.googleapis.com/auth/drive',
+                    callback: async (response) => {
+                        if (response.access_token) {
+                            APP_STATE.accessToken = response.access_token;
+                            showToast('Google 雲端帳號授權成功！', 'success');
+                            updateSyncStatus('connected', 'Google 雲端已連線');
+                            $('#settingsModal').classList.add('hidden');
+                            await syncWithGoogleDrive();
+                        } else {
+                            showToast('授權失敗，請確認 Client ID 設定。', 'error');
+                        }
+                    },
+                });
+                tokenClient.requestAccessToken({ prompt: 'consent' });
+            } catch (err) {
+                console.error(err);
+                showToast('Google Identity Services 初始化失敗，請檢查網域與憑證。', 'error');
+            }
+        }
+
+        async function syncWithGoogleDrive() {
+            if (!APP_STATE.accessToken || !APP_STATE.folderId) return;
+
+            updateSyncStatus('syncing', '正在讀取雲端目錄...');
+            try {
+                // 1. Fetch files in folder
+                const q = `'${APP_STATE.folderId}' in parents and trashed = false`;
+                const res = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id,name,mimeType,size,modifiedTime)&pageSize=200`, {
+                    headers: { Authorization: `Bearer ${APP_STATE.accessToken}` }
+                });
+                const data = await res.json();
+                
+                if (data.error) {
+                    throw new Error(data.error.message);
+                }
+
+                const driveFiles = data.files || [];
+                
+                // Check if bookshelf_metadata.json exists
+                const metadataFile = driveFiles.find(f => f.name === 'bookshelf_metadata.json');
+                let remoteMetadata = { categories: APP_STATE.categories, bookProgress: {} };
+
+                if (metadataFile) {
+                    APP_STATE.driveMetadataFileId = metadataFile.id;
+                    const metaRes = await fetch(`https://www.googleapis.com/drive/v3/files/${metadataFile.id}?alt=media`, {
+                        headers: { Authorization: `Bearer ${APP_STATE.accessToken}` }
+                    });
+                    remoteMetadata = await metaRes.json();
+                    if (remoteMetadata.categories) {
+                        APP_STATE.categories = Array.from(new Set([...APP_STATE.categories, ...remoteMetadata.categories]));
+                    }
+                }
+
+                // Process PDF & EPUB files
+                const validFiles = driveFiles.filter(f => f.name.endsWith('.pdf') || f.name.endsWith('.epub'));
+                
+                // Merge remote files into APP_STATE.books
+                const newBooksList = validFiles.map(f => {
+                    const ext = f.name.endsWith('.pdf') ? 'pdf' : 'epub';
+                    const existing = APP_STATE.books.find(b => b.id === f.id) || {};
+                    const remoteMeta = remoteMetadata.bookProgress ? remoteMetadata.bookProgress[f.id] || {} : {};
+
+                    return {
+                        id: f.id,
+                        title: f.name.replace(/\.(pdf|epub)$/i, ''),
+                        fileName: f.name,
+                        format: ext,
+                        size: formatFileSize(f.size || 0),
+                        sizeBytes: parseInt(f.size || 0),
+                        source: 'gdrive',
+                        category: existing.category || remoteMeta.category || '未分類',
+                        favorite: existing.favorite || remoteMeta.favorite || false,
+                        progress: remoteMeta.progress || existing.progress || 0,
+                        pdfPage: remoteMeta.pdfPage || existing.pdfPage || 1,
+                        pdfTotalPages: remoteMeta.pdfTotalPages || existing.pdfTotalPages || 0,
+                        epubCfi: remoteMeta.epubCfi || existing.epubCfi || null,
+                        lastRead: remoteMeta.lastRead || existing.lastRead || 0
+                    };
+                });
+
+                // Retain local uploaded books
+                const localBooks = APP_STATE.books.filter(b => b.source === 'local');
+                APP_STATE.books = [...newBooksList, ...localBooks];
+
+                saveBooksCache();
+                renderCategoriesSidebar();
+                renderBookshelf();
+                updateSyncStatus('connected', `雲端已同步 (${newBooksList.length} 本)`);
+                showToast(`已成功同步雲端 ${newBooksList.length} 本書籍！`, 'success');
+
+                // Auto update metadata to Drive
+                await pushMetadataToDrive();
+
+            } catch (err) {
+                console.error(err);
+                showToast('讀取 Google 雲端資料夾失敗：' + err.message, 'error');
+                updateSyncStatus('ready', '雲端同步異常');
+            }
+        }
+
+        async function pushMetadataToDrive() {
+            if (!APP_STATE.accessToken || !APP_STATE.folderId) return;
+
+            const metadata = {
+                categories: APP_STATE.categories,
+                updatedAt: new Date().toISOString(),
+                bookProgress: {}
+            };
+
+            APP_STATE.books.forEach(b => {
+                metadata.bookProgress[b.id] = {
+                    category: b.category,
+                    favorite: b.favorite,
+                    progress: b.progress,
+                    pdfPage: b.pdfPage,
+                    pdfTotalPages: b.pdfTotalPages,
+                    epubCfi: b.epubCfi,
+                    lastRead: b.lastRead
+                };
+            });
+
+            const blob = new Blob([JSON.stringify(metadata, null, 2)], { type: 'application/json' });
+            
+            try {
+                if (APP_STATE.driveMetadataFileId) {
+                    // Update existing
+                    await fetch(`https://www.googleapis.com/upload/drive/v3/files/${APP_STATE.driveMetadataFileId}?uploadType=media`, {
+                        method: 'PATCH',
+                        headers: {
+                            Authorization: `Bearer ${APP_STATE.accessToken}`,
+                            'Content-Type': 'application/json'
+                        },
+                        body: blob
+                    });
+                } else {
+                    // Create new metadata file inside folder
+                    const metadataFileObj = {
+                        name: 'bookshelf_metadata.json',
+                        parents: [APP_STATE.folderId],
+                        mimeType: 'application/json'
+                    };
+                    const form = new FormData();
+                    form.append('metadata', new Blob([JSON.stringify(metadataFileObj)], { type: 'application/json' }));
+                    form.append('file', blob);
+
+                    const createRes = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
+                        method: 'POST',
+                        headers: { Authorization: `Bearer ${APP_STATE.accessToken}` },
+                        body: form
+                    });
+                    const resData = await createRes.json();
+                    if (resData.id) APP_STATE.driveMetadataFileId = resData.id;
+                }
+            } catch (e) {
+                console.warn('Metadata push failed', e);
+            }
+        }
+
+        /**
+         * Local File Handling (Offline Mode)
+         */
+        function handleLocalFiles(files) {
+            let count = 0;
+            Array.from(files).forEach(file => {
+                if (!file.name.endsWith('.pdf') && !file.name.endsWith('.epub')) return;
+
+                const ext = file.name.endsWith('.pdf') ? 'pdf' : 'epub';
+                const id = 'local_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5);
+
+                const newBook = {
+                    id: id,
+                    title: file.name.replace(/\.(pdf|epub)$/i, ''),
+                    fileName: file.name,
+                    format: ext,
+                    size: formatFileSize(file.size),
+                    sizeBytes: file.size,
+                    source: 'local',
+                    fileObj: file, // Keep reference in memory
+                    category: '本機試讀',
+                    favorite: false,
+                    progress: 0,
+                    pdfPage: 1,
+                    pdfTotalPages: 0,
+                    epubCfi: null,
+                    lastRead: Date.now()
+                };
+
+                APP_STATE.books.unshift(newBook);
+                count++;
+            });
+
+            if (count > 0) {
+                if (!APP_STATE.categories.includes('本機試讀')) {
+                    APP_STATE.categories.push('本機試讀');
+                }
+                saveBooksCache();
+                renderCategoriesSidebar();
+                renderBookshelf();
+                showToast(`已匯入 ${count} 本本機書籍！`, 'success');
+            }
+        }
+
+        /**
+         * UI Rendering Logic
+         */
+        function renderCategoriesSidebar() {
+            const container = $('#customCategoriesNav');
+            container.innerHTML = '';
+
+            APP_STATE.categories.forEach(cat => {
+                const count = APP_STATE.books.filter(b => b.category === cat).length;
+                const btn = document.createElement('button');
+                btn.dataset.filter = 'cat:' + cat;
+                btn.className = `nav-item w-full flex items-center justify-between px-3 py-1.5 rounded-xl text-xs font-medium text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800/60 group`;
+                btn.innerHTML = `
+                    <span class="flex items-center gap-2 truncate"><i class="fa-solid fa-folder text-amber-500/80"></i><span class="truncate">${cat}</span></span>
+                    <div class="flex items-center gap-1">
+                        <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800">${count}</span>
+                        <i class="fa-solid fa-trash text-slate-400 hover:text-red-500 opacity-0 group-hover:opacity-100 p-1 transition" onclick="deleteCategory('${cat}', event)"></i>
+                    </div>
+                `;
+                btn.onclick = (e) => {
+                    if (e.target.classList.contains('fa-trash')) return;
+                    setFilter('cat:' + cat, `分類: ${cat}`);
+                };
+                container.appendChild(btn);
+            });
+
+            // Update Counts
+            $('#count-all').textContent = APP_STATE.books.length;
+            $('#count-reading').textContent = APP_STATE.books.filter(b => b.progress > 0 && b.progress < 100).length;
+            $('#count-completed').textContent = APP_STATE.books.filter(b => b.progress >= 100).length;
+            $('#count-favorites').textContent = APP_STATE.books.filter(b => b.favorite).length;
+            $('#count-pdf').textContent = APP_STATE.books.filter(b => b.format === 'pdf').length;
+            $('#count-epub').textContent = APP_STATE.books.filter(b => b.format === 'epub').length;
+
+            updateOverallProgress();
+        }
+
+        function updateOverallProgress() {
+            if (APP_STATE.books.length === 0) {
+                $('#overallProgressText').textContent = '0%';
+                $('#overallProgressBar').style.width = '0%';
+                return;
+            }
+            const total = APP_STATE.books.reduce((acc, b) => acc + (b.progress || 0), 0);
+            const avg = Math.round(total / APP_STATE.books.length);
+            $('#overallProgressText').textContent = `${avg}%`;
+            $('#overallProgressBar').style.width = `${avg}%`;
+        }
+
+        function renderBookshelf() {
+            const grid = $('#booksGrid');
+            const emptyState = $('#emptyState');
+            grid.innerHTML = '';
+
+            // Filter logic
+            let filtered = APP_STATE.books.filter(b => {
+                // Search query filter
+                if (APP_STATE.searchQuery && !b.title.toLowerCase().includes(APP_STATE.searchQuery.toLowerCase())) {
+                    return false;
+                }
+                // Category/System Nav Filter
+                if (APP_STATE.currentFilter === 'all') return true;
+                if (APP_STATE.currentFilter === 'reading') return b.progress > 0 && b.progress < 100;
+                if (APP_STATE.currentFilter === 'completed') return b.progress >= 100;
+                if (APP_STATE.currentFilter === 'favorites') return b.favorite;
+                if (APP_STATE.currentFilter === 'pdf') return b.format === 'pdf';
+                if (APP_STATE.currentFilter === 'epub') return b.format === 'epub';
+                if (APP_STATE.currentFilter.startsWith('cat:')) {
+                    const catName = APP_STATE.currentFilter.replace('cat:', '');
+                    return b.category === catName;
+                }
+                return true;
+            });
+
+            // Sort logic
+            filtered.sort((a, b) => {
+                if (APP_STATE.sortBy === 'recent') return (b.lastRead || 0) - (a.lastRead || 0);
+                if (APP_STATE.sortBy === 'title') return a.title.localeCompare(b.title, 'zh-TW');
+                if (APP_STATE.sortBy === 'progress') return (b.progress || 0) - (a.progress || 0);
+                if (APP_STATE.sortBy === 'size') return (b.sizeBytes || 0) - (a.sizeBytes || 0);
+                return 0;
+            });
+
+            $('#currentFilterCount').textContent = `${filtered.length} 本`;
+
+            if (filtered.length === 0) {
+                emptyState.classList.remove('hidden');
+                return;
+            } else {
+                emptyState.classList.add('hidden');
+            }
+
+            // Render Book Cards
+            filtered.forEach(book => {
+                const card = document.createElement('div');
+                card.className = `group bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-3 flex flex-col justify-between hover:shadow-xl hover:border-brand-500/50 transition duration-200 relative`;
+                
+                const isPdf = book.format === 'pdf';
+                const badgeColor = isPdf ? 'bg-red-100 text-red-600 dark:bg-red-950/60 dark:text-red-400' : 'bg-emerald-100 text-emerald-600 dark:bg-emerald-950/60 dark:text-emerald-400';
+                
+                card.innerHTML = `
+                    <!-- Cover Placeholder Graphics -->
+                    <div class="h-44 rounded-xl bg-slate-100 dark:bg-slate-800 flex flex-col items-center justify-center p-3 relative overflow-hidden cursor-pointer mb-3 group-hover:scale-[1.02] transition-transform" onclick="openReader('${book.id}')">
+                        <div class="w-12 h-12 rounded-2xl ${isPdf ? 'bg-red-500' : 'bg-emerald-500'} text-white flex items-center justify-center shadow-lg text-xl mb-2">
+                            <i class="fa-solid ${isPdf ? 'fa-file-pdf' : 'fa-book'}"></i>
+                        </div>
+                        <span class="text-xs font-bold text-center line-clamp-2 px-1 text-slate-700 dark:text-slate-200">${book.title}</span>
+                        
+                        <!-- Format Tag -->
+                        <span class="absolute top-2 left-2 text-[10px] uppercase font-extrabold px-2 py-0.5 rounded-md ${badgeColor}">
+                            ${book.format}
+                        </span>
+
+                        <!-- Favorite Star Button -->
+                        <button onclick="toggleFavorite('${book.id}', event)" class="absolute top-2 right-2 p-1 text-slate-300 hover:text-amber-400 transition">
+                            <i class="fa-solid fa-star ${book.favorite ? 'text-amber-400' : ''}"></i>
+                        </button>
+                    </div>
+
+                    <!-- Book Info Block -->
+                    <div class="space-y-2">
+                        <div class="flex items-center justify-between text-xs text-slate-400">
+                            <span>${book.size}</span>
+                            <button onclick="openCategoryModal('${book.id}', event)" class="hover:text-brand-500 text-[11px] font-medium max-w-[90px] truncate" title="點擊切換分類">
+                                <i class="fa-solid fa-tag text-[10px]"></i> ${book.category}
+                            </button>
+                        </div>
+
+                        <!-- Progress Bar -->
+                        <div>
+                            <div class="flex justify-between text-[11px] font-semibold mb-1">
+                                <span class="text-slate-500">進度</span>
+                                <span class="text-brand-600 dark:text-brand-400">${book.progress || 0}%</span>
+                            </div>
+                            <div class="w-full bg-slate-100 dark:bg-slate-800 h-1.5 rounded-full overflow-hidden">
+                                <div class="bg-brand-500 h-full rounded-full transition-all duration-300" style="width: ${book.progress || 0}%"></div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                grid.appendChild(card);
+            });
+        }
+
+        /**
+         * Category Management Actions
+         */
+        function setFilter(filterKey, title) {
+            APP_STATE.currentFilter = filterKey;
+            $('#currentFilterTitle').textContent = title;
+            renderBookshelf();
+
+            // Mobile sidebar auto close
+            if (window.innerWidth < 768) {
+                $('#sidebar').classList.add('-translate-x-full');
+            }
+        }
+
+        function deleteCategory(catName, e) {
+            e.stopPropagation();
+            if (confirm(`確定要刪除「${catName}」分類嗎？（裡面的書籍不會被刪除，將設為未分類）`)) {
+                APP_STATE.categories = APP_STATE.categories.filter(c => c !== catName);
+                APP_STATE.books.forEach(b => {
+                    if (b.category === catName) b.category = '未分類';
+                });
+                saveBooksCache();
+                renderCategoriesSidebar();
+                renderBookshelf();
+                pushMetadataToDrive();
+                showToast(`已刪除分類「${catName}」`, 'info');
+            }
+        }
+
+        function toggleFavorite(bookId, e) {
+            e.stopPropagation();
+            const book = APP_STATE.books.find(b => b.id === bookId);
+            if (book) {
+                book.favorite = !book.favorite;
+                saveBooksCache();
+                renderCategoriesSidebar();
+                renderBookshelf();
+                pushMetadataToDrive();
+            }
+        }
+
+        let targetCatBookId = null;
+        function openCategoryModal(bookId, e) {
+            e.stopPropagation();
+            targetCatBookId = bookId;
+            const book = APP_STATE.books.find(b => b.id === bookId);
+            if (!book) return;
+
+            const opts = $('#catModalOptions');
+            opts.innerHTML = '';
+
+            const allCats = Array.from(new Set(['未分類', ...APP_STATE.categories]));
+            allCats.forEach(cat => {
+                const isSelected = book.category === cat;
+                const item = document.createElement('label');
+                item.className = 'flex items-center gap-2 p-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer';
+                item.innerHTML = `
+                    <input type="radio" name="catChoice" value="${cat}" ${isSelected ? 'checked' : ''} class="text-brand-600 focus:ring-brand-500">
+                    <span>${cat}</span>
+                `;
+                opts.appendChild(item);
+            });
+
+            $('#categoryModal').classList.remove('hidden');
+        }
+
+        /**
+         * Reader Engine Controller (PDF & EPUB)
+         */
+        async function openReader(bookId) {
+            const book = APP_STATE.books.find(b => b.id === bookId);
+            if (!book) return;
+
+            APP_STATE.currentBookId = bookId;
+            book.lastRead = Date.now();
+
+            const modal = $('#readerModal');
+            const loading = $('#readerLoading');
+            const loadingText = $('#readerLoadingText');
+            const pdfContainer = $('#pdfViewerContainer');
+            const epubContainer = $('#epubViewerContainer');
+            const pdfControls = $('#pdfControls');
+            const epubControls = $('#epubControls');
+            const fallbackBtn = $('#driveFallbackBtn');
+
+            $('#readerTitle').textContent = book.title;
+            $('#readerSubTitle').textContent = `最後閱讀: ${new Date().toLocaleDateString()}`;
+
+            modal.classList.remove('hidden');
+            loading.classList.remove('hidden');
+            pdfContainer.classList.add('hidden');
+            epubContainer.classList.add('hidden');
+            pdfControls.classList.add('hidden');
+            epubControls.classList.add('hidden');
+            fallbackBtn.classList.add('hidden');
+
+            if (book.source === 'gdrive') {
+                fallbackBtn.href = `https://drive.google.com/file/d/${book.id}/view`;
+                fallbackBtn.classList.remove('hidden');
+            }
+
+            try {
+                if (book.format === 'pdf') {
+                    pdfControls.classList.remove('hidden');
+                    pdfContainer.classList.remove('hidden');
+                    loadingText.textContent = '正在下載/串流 PDF 文件...';
+
+                    let pdfData = null;
+                    if (book.source === 'gdrive') {
+                        // Fetch stream with Authorization Header
+                        const response = await fetch(`https://www.googleapis.com/drive/v3/files/${book.id}?alt=media`, {
+                            headers: { Authorization: `Bearer ${APP_STATE.accessToken}` }
+                        });
+                        pdfData = await response.arrayBuffer();
+                    } else if (book.fileObj) {
+                        pdfData = await book.fileObj.arrayBuffer();
+                    }
+
+                    if (!pdfData) throw new Error('無法取得 PDF 檔案內容');
+
+                    APP_STATE.pdfDoc = await pdfjsLib.getDocument({ data: pdfData }).promise;
+                    $('#pdfPageCount').textContent = APP_STATE.pdfDoc.numPages;
+                    book.pdfTotalPages = APP_STATE.pdfDoc.numPages;
+
+                    APP_STATE.pdfPage = book.pdfPage || 1;
+                    await renderPDFPage(APP_STATE.pdfPage);
+                    loading.classList.add('hidden');
+
+                } else if (book.format === 'epub') {
+                    epubControls.classList.remove('hidden');
+                    epubContainer.classList.remove('hidden');
+                    loadingText.textContent = '正在解析 EPUB 電子書...';
+
+                    epubContainer.innerHTML = ''; // Reset container
+
+                    let epubSource = null;
+                    if (book.source === 'gdrive') {
+                        const response = await fetch(`https://www.googleapis.com/drive/v3/files/${book.id}?alt=media`, {
+                            headers: { Authorization: `Bearer ${APP_STATE.accessToken}` }
+                        });
+                        epubSource = await response.arrayBuffer();
+                    } else if (book.fileObj) {
+                        epubSource = await book.fileObj.arrayBuffer();
+                    }
+
+                    APP_STATE.epubBook = ePub(epubSource);
+                    APP_STATE.epubRendition = APP_STATE.epubBook.renderTo("epubViewerContainer", {
+                        width: "100%",
+                        height: "100%",
+                        spread: "always"
+                    });
+
+                    // Restore position CFI
+                    if (book.epubCfi) {
+                        await APP_STATE.epubRendition.display(book.epubCfi);
+                    } else {
+                        await APP_STATE.epubRendition.display();
+                    }
+
+                    // Generate Locations for precise percentage calculation
+                    APP_STATE.epubBook.ready.then(() => {
+                        return APP_STATE.epubBook.locations.generate(1000);
+                    }).then(() => {
+                        updateEpubProgress();
+                    });
+
+                    // EPUB Location change listener
+                    APP_STATE.epubRendition.on('relocated', location => {
+                        if (location && location.start) {
+                            book.epubCfi = location.start.cfi;
+                            updateEpubProgress();
+                        }
+                    });
+
+                    // Render TOC
+                    const toc = await APP_STATE.epubBook.loaded.navigation;
+                    renderEpubToc(toc.toc);
+
+                    loading.classList.add('hidden');
+                }
+            } catch (err) {
+                console.error(err);
+                loadingText.textContent = '閱讀器載入失敗：' + err.message;
+                showToast('閱讀器載入失敗，若為雲端大檔請試用 Google 雲端預覽。', 'error');
+            }
+        }
+
+        /* PDF Rendering Logic */
+        async function renderPDFPage(pageNum) {
+            if (!APP_STATE.pdfDoc) return;
+            const book = APP_STATE.books.find(b => b.id === APP_STATE.currentBookId);
+
+            pageNum = Math.max(1, Math.min(pageNum, APP_STATE.pdfDoc.numPages));
+            APP_STATE.pdfPage = pageNum;
+            $('#pdfPageNum').value = pageNum;
+
+            const page = await APP_STATE.pdfDoc.getPage(pageNum);
+            const canvas = $('#pdfCanvas');
+            const ctx = canvas.getContext('2d');
+
+            const viewport = page.getViewport({ scale: APP_STATE.pdfScale });
+            canvas.height = viewport.height;
+            canvas.width = viewport.width;
+
+            await page.render({ canvasContext: ctx, viewport: viewport }).promise;
+
+            // Update progress
+            if (book) {
+                book.pdfPage = pageNum;
+                book.progress = Math.round((pageNum / APP_STATE.pdfDoc.numPages) * 100);
+                $('#readerSubTitle').textContent = `頁碼 ${pageNum} / ${APP_STATE.pdfDoc.numPages} · ${book.progress}%`;
+                saveBooksCache();
+            }
+        }
+
+        /* EPUB Progress Helper */
+        function updateEpubProgress() {
+            const book = APP_STATE.books.find(b => b.id === APP_STATE.currentBookId);
+            if (!book || !APP_STATE.epubRendition || !APP_STATE.epubBook.locations) return;
+
+            const currentLocation = APP_STATE.epubRendition.currentLocation();
+            if (currentLocation && currentLocation.start) {
+                const percentage = APP_STATE.epubBook.locations.percentageFromCfi(currentLocation.start.cfi);
+                book.progress = Math.round((percentage || 0) * 100);
+                $('#readerSubTitle').textContent = `閱讀進度: ${book.progress}%`;
+                saveBooksCache();
+            }
+        }
+
+        function renderEpubToc(tocItems) {
+            const list = $('#epubTocList');
+            list.innerHTML = '';
+            tocItems.forEach(item => {
+                const btn = document.createElement('button');
+                btn.className = 'w-full text-left p-2 rounded-lg hover:bg-slate-800 truncate text-xs transition';
+                btn.textContent = item.label.trim();
+                btn.onclick = () => {
+                    APP_STATE.epubRendition.display(item.href);
+                    $('#epubTocDrawer').classList.add('-translate-x-full');
+                };
+                list.appendChild(btn);
+            });
+        }
+
+        function closeReader() {
+            $('#readerModal').classList.add('hidden');
+            // Clean PDF doc reference
+            APP_STATE.pdfDoc = null;
+            if (APP_STATE.epubRendition) {
+                APP_STATE.epubRendition.destroy();
+                APP_STATE.epubRendition = null;
+            }
+            pushMetadataToDrive();
+            renderBookshelf();
+        }
+
+        /**
+         * Global Event Listeners Setup
+         */
+        function setupEventListeners() {
+            // Sidebar Mobile Toggle
+            $('#mobileMenuBtn').onclick = () => {
+                $('#sidebar').classList.toggle('-translate-x-full');
+            };
+
+            // Search input
+            $('#searchInput').oninput = (e) => {
+                APP_STATE.searchQuery = e.target.value.trim();
+                renderBookshelf();
+            };
+
+            // Sort dropdown
+            $('#sortSelect').onchange = (e) => {
+                APP_STATE.sortBy = e.target.value;
+                renderBookshelf();
+            };
+
+            // Refresh & Sync
+            $('#refreshDriveBtn').onclick = () => {
+                if (APP_STATE.accessToken) {
+                    syncWithGoogleDrive();
+                } else {
+                    $('#settingsModal').classList.remove('hidden');
+                }
+            };
+
+            // Settings Modal Open/Close
+            $('#openSettingsBtn').onclick = () => $('#settingsModal').classList.remove('hidden');
+            $('#emptySettingsBtn').onclick = () => $('#settingsModal').classList.remove('hidden');
+            $('#closeSettingsBtn').onclick = () => $('#settingsModal').classList.add('hidden');
+            $('#saveSettingsBtn').onclick = authenticateGoogleDrive;
+
+            // Tutorial Accordion Toggle
+            $('#toggleGuideBtn').onclick = () => {
+                const content = $('#guideContent');
+                const arrow = $('#guideArrow');
+                content.classList.toggle('hidden');
+                arrow.classList.toggle('rotate-180');
+            };
+
+            // Add Category Button
+            $('#addCategoryBtn').onclick = () => {
+                const name = prompt('請輸入新分類名稱：');
+                if (name && name.trim()) {
+                    const trimmed = name.trim();
+                    if (!APP_STATE.categories.includes(trimmed)) {
+                        APP_STATE.categories.push(trimmed);
+                        saveBooksCache();
+                        renderCategoriesSidebar();
+                        pushMetadataToDrive();
+                        showToast(`已新增分類「${trimmed}」`, 'success');
+                    }
+                }
+            };
+
+            // Category Modal Apply
+            $('#closeCatModalBtn').onclick = () => $('#categoryModal').classList.add('hidden');
+            $('#saveCatModalBtn').onclick = () => {
+                const selected = document.querySelector('input[name="catChoice"]:checked');
+                if (selected && targetCatBookId) {
+                    const book = APP_STATE.books.find(b => b.id === targetCatBookId);
+                    if (book) {
+                        book.category = selected.value;
+                        saveBooksCache();
+                        renderCategoriesSidebar();
+                        renderBookshelf();
+                        pushMetadataToDrive();
+                    }
+                }
+                $('#categoryModal').classList.add('hidden');
+            };
+
+            // Local File Upload Input
+            $('#localFileInput').onchange = (e) => {
+                if (e.target.files.length > 0) {
+                    handleLocalFiles(e.target.files);
+                }
+            };
+
+            // Drag and Drop File Import
+            const dropZone = $('#dropZone');
+            const dropOverlay = $('#dropOverlay');
+
+            window.addEventListener('dragover', (e) => e.preventDefault());
+            window.addEventListener('dragenter', (e) => {
+                e.preventDefault();
+                dropOverlay.classList.remove('hidden');
+            });
+            dropOverlay.addEventListener('dragleave', (e) => {
+                e.preventDefault();
+                dropOverlay.classList.add('hidden');
+            });
+            dropOverlay.addEventListener('drop', (e) => {
+                e.preventDefault();
+                dropOverlay.classList.add('hidden');
+                if (e.dataTransfer.files.length > 0) {
+                    handleLocalFiles(e.dataTransfer.files);
+                }
+            });
+
+            // System Filters Navigation Clicks
+            $$('#systemNav .nav-item, [data-filter^="pdf"], [data-filter^="epub"]').forEach(btn => {
+                btn.onclick = () => {
+                    const filter = btn.dataset.filter;
+                    const titles = {
+                        all: '全部藏書',
+                        reading: '閱讀中',
+                        completed: '已讀完',
+                        favorites: '我的收藏',
+                        pdf: 'PDF 文件',
+                        epub: 'EPUB 電子書'
+                    };
+                    setFilter(filter, titles[filter] || '藏書列表');
+                };
+            });
+
+            // Reader Event Bindings
+            $('#closeReaderBtn').onclick = closeReader;
+
+            // PDF Reader Buttons
+            $('#pdfPrevBtn').onclick = () => renderPDFPage(APP_STATE.pdfPage - 1);
+            $('#pdfNextBtn').onclick = () => renderPDFPage(APP_STATE.pdfPage + 1);
+            $('#pdfPageNum').onchange = (e) => renderPDFPage(parseInt(e.target.value) || 1);
+            $('#pdfZoomInBtn').onclick = () => {
+                APP_STATE.pdfScale += 0.2;
+                $('#pdfZoomText').textContent = Math.round(APP_STATE.pdfScale * 100) + '%';
+                renderPDFPage(APP_STATE.pdfPage);
+            };
+            $('#pdfZoomOutBtn').onclick = () => {
+                APP_STATE.pdfScale = Math.max(0.6, APP_STATE.pdfScale - 0.2);
+                $('#pdfZoomText').textContent = Math.round(APP_STATE.pdfScale * 100) + '%';
+                renderPDFPage(APP_STATE.pdfPage);
+            };
+
+            // EPUB Reader Buttons
+            $('#epubTocToggleBtn').onclick = () => {
+                $('#epubTocDrawer').classList.toggle('-translate-x-full');
+            };
+            $('#closeTocBtn').onclick = () => {
+                $('#epubTocDrawer').classList.add('-translate-x-full');
+            };
+            $('#epubFontPlus').onclick = () => {
+                if (APP_STATE.epubRendition) {
+                    const currentSize = APP_STATE.epubFontSize || 100;
+                    APP_STATE.epubFontSize = currentSize + 10;
+                    APP_STATE.epubRendition.themes.fontSize(APP_STATE.epubFontSize + '%');
+                }
+            };
+            $('#epubFontMinus').onclick = () => {
+                if (APP_STATE.epubRendition) {
+                    const currentSize = APP_STATE.epubFontSize || 100;
+                    APP_STATE.epubFontSize = Math.max(70, currentSize - 10);
+                    APP_STATE.epubRendition.themes.fontSize(APP_STATE.epubFontSize + '%');
+                }
+            };
+
+            // EPUB Themes
+            $$('[data-epub-theme]').forEach(btn => {
+                btn.onclick = () => {
+                    const theme = btn.dataset.epubTheme;
+                    if (!APP_STATE.epubRendition) return;
+                    if (theme === 'light') {
+                        APP_STATE.epubRendition.themes.default({ body: { background: '#ffffff !important', color: '#1e293b !important' } });
+                    } else if (theme === 'sepia') {
+                        APP_STATE.epubRendition.themes.default({ body: { background: '#fbf0d9 !important', color: '#5f4b32 !important' } });
+                    } else if (theme === 'dark') {
+                        APP_STATE.epubRendition.themes.default({ body: { background: '#0f172a !important', color: '#e2e8f0 !important' } });
+                    }
+                };
+            });
+
+            // Touch / Screen Edge Page Turn Buttons
+            $('#prevPageZone').onclick = () => turnPage(-1);
+            $('#nextPageZone').onclick = () => turnPage(1);
+
+            // Global Keyboard Arrow Key Controls
+            document.addEventListener('keydown', (e) => {
+                if ($('#readerModal').classList.contains('hidden')) return;
+                if (e.key === 'ArrowLeft') turnPage(-1);
+                if (e.key === 'ArrowRight') turnPage(1);
+                if (e.key === 'Escape') closeReader();
+            });
+        }
+
+        function turnPage(dir) {
+            const book = APP_STATE.books.find(b => b.id === APP_STATE.currentBookId);
+            if (!book) return;
+            if (book.format === 'pdf') {
+                renderPDFPage(APP_STATE.pdfPage + dir);
+            } else if (book.format === 'epub' && APP_STATE.epubRendition) {
+                if (dir === -1) APP_STATE.epubRendition.prev();
+                if (dir === 1) APP_STATE.epubRendition.next();
+            }
+        }
+
+        /* Utility Helper */
+        function formatFileSize(bytes) {
+            if (bytes === 0) return '0 B';
+            const k = 1024;
+            const sizes = ['B', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+        }
+    </script>
+</body>
+</html>
